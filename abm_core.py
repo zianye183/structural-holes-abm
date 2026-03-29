@@ -1,8 +1,7 @@
 """
-Core ABM module: initialization, tie formation, and analysis.
+Core ABM module: initialization and analysis.
 
 All initialization functions return an InitResult with a distance matrix.
-All tie formation functions take a distance matrix and return a nx.Graph.
 The geometry is absorbed into the initialization step.
 """
 
@@ -32,6 +31,35 @@ class InitResult:
     @property
     def n(self) -> int:
         return self.distance_matrix.shape[0]
+
+    def normalized(self, method: str = "mean") -> "InitResult":
+        """Return a new InitResult with normalized distance matrix.
+
+        Methods:
+            "mean": D / mean(D). Mean distance becomes 1.
+                    Preserves distribution shape. Good default.
+            "max":  D / max(D). Farthest pair becomes 1.
+                    All values in [0, 1]. Sensitive to outliers.
+
+        The raw distance matrix is preserved in metadata["D_raw"].
+        """
+        D = self.distance_matrix
+        upper = D[np.triu_indices(D.shape[0], k=1)]
+
+        if method == "mean":
+            scale = upper.mean()
+        elif method == "max":
+            scale = upper.max()
+        else:
+            raise ValueError(f"Unknown normalization method: {method!r}. Use 'mean' or 'max'.")
+
+        D_norm = D / scale
+        new_metadata = {**self.metadata, "D_raw": D, "normalization": method, "norm_scale": scale}
+        return InitResult(
+            distance_matrix=D_norm,
+            viz_coords=self.viz_coords,
+            metadata=new_metadata,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -108,9 +136,18 @@ def _hyperbolic_viz_coords(
                             r_visual * np.sin(theta)])
 
 
-def _hyperbolic_disk_radius(n: int, target_mean_degree: float) -> float:
-    """Disk radius R from Krioukov Eq. 13."""
-    return 2.0 * np.log(8.0 * n / (np.pi * target_mean_degree))
+def _hyperbolic_disk_radius(n: int, spread: float, alpha: float) -> float:
+    """Disk radius R controlling point spread.
+
+    Based on Krioukov Eq. 13 generalized for arbitrary alpha.
+    For alpha=0.5 this reduces to 2*ln(8n/(pi*spread)).
+
+    Args:
+        n: number of agents.
+        spread: controls how spread-out points are (higher = tighter).
+        alpha: radial density exponent (gamma = 2*alpha + 1).
+    """
+    return (1.0 / alpha) * np.log(8.0 * alpha * n / (np.pi * spread))
 
 
 def _sample_hyperbolic_r(
@@ -126,7 +163,7 @@ def _sample_hyperbolic_r(
 
 def init_hyperbolic_uniform(
     n: int,
-    target_mean_degree: float,
+    spread: float,
     rng: np.random.Generator,
     alpha: float = 0.5,
     viz_stretch: float = 0.6,
@@ -134,9 +171,9 @@ def init_hyperbolic_uniform(
     """Krioukov prescription: uniform theta, sinh(alpha*r) radial density.
 
     alpha controls power-law exponent: gamma = 2*alpha + 1 (zeta=1).
-    NOTE: alpha is a key tunable parameter.
+    spread controls how concentrated points are (higher = tighter clustering).
     """
-    R = _hyperbolic_disk_radius(n, target_mean_degree)
+    R = _hyperbolic_disk_radius(n, spread, alpha)
     r = _sample_hyperbolic_r(n, R, alpha, rng)
     theta = rng.uniform(0, 2 * np.pi, size=n)
     return InitResult(
@@ -150,7 +187,7 @@ def init_hyperbolic_uniform(
 
 def init_hyperbolic_gmm(
     n: int,
-    target_mean_degree: float,
+    spread: float,
     n_clusters: int,
     angular_sigma: float,
     rng: np.random.Generator,
@@ -158,7 +195,7 @@ def init_hyperbolic_gmm(
     viz_stretch: float = 0.6,
 ) -> InitResult:
     """Krioukov radial density + Gaussian mixture on theta."""
-    R = _hyperbolic_disk_radius(n, target_mean_degree)
+    R = _hyperbolic_disk_radius(n, spread, alpha)
     r = _sample_hyperbolic_r(n, R, alpha, rng)
     centers = np.linspace(0, 2 * np.pi, n_clusters, endpoint=False)
     labels = rng.integers(0, n_clusters, size=n)
@@ -171,66 +208,6 @@ def init_hyperbolic_gmm(
                   "n_clusters": n_clusters, "angular_sigma": angular_sigma,
                   "labels": labels, "r": r, "theta": theta},
     )
-
-
-# ---------------------------------------------------------------------------
-# Tie formation (geometry-agnostic — operates on distance matrix only)
-# ---------------------------------------------------------------------------
-
-def form_network_threshold(dist_matrix: np.ndarray, radius: float) -> nx.Graph:
-    """Hard threshold: connect if distance < radius."""
-    n = dist_matrix.shape[0]
-    G = nx.Graph()
-    G.add_nodes_from(range(n))
-    mask = np.triu((dist_matrix < radius) & (dist_matrix > 0), k=1)
-    G.add_edges_from(zip(*np.where(mask)))
-    return G
-
-
-def form_network_fermi_dirac(
-    dist_matrix: np.ndarray,
-    radius: float,
-    temperature: float,
-    rng: np.random.Generator,
-) -> nx.Graph:
-    """Soft threshold: p(connect) = 1 / (1 + exp((d - R) / 2T))."""
-    n = dist_matrix.shape[0]
-    if temperature <= 0:
-        return form_network_threshold(dist_matrix, radius)
-
-    prob = 1.0 / (1.0 + np.exp((dist_matrix - radius) / (2.0 * temperature)))
-    np.fill_diagonal(prob, 0)
-    draws = rng.uniform(0, 1, size=(n, n))
-    mask = np.triu(draws < prob, k=1)
-    G = nx.Graph()
-    G.add_nodes_from(range(n))
-    G.add_edges_from(zip(*np.where(mask)))
-    return G
-
-
-def form_network_knn(dist_matrix: np.ndarray, k: int) -> nx.Graph:
-    """k-nearest neighbors: connect to k closest agents (symmetrized)."""
-    n = dist_matrix.shape[0]
-    G = nx.Graph()
-    G.add_nodes_from(range(n))
-    for i in range(n):
-        dists_i = dist_matrix[i].copy()
-        dists_i[i] = np.inf
-        neighbors = np.argpartition(dists_i, k)[:k]
-        for j in neighbors:
-            G.add_edge(i, j)
-    return G
-
-
-def calibrate_radius(
-    dist_matrix: np.ndarray,
-    target_mean_degree: float,
-) -> float:
-    """Find distance threshold that yields target mean degree."""
-    n = dist_matrix.shape[0]
-    dists = dist_matrix[np.triu_indices(n, k=1)]
-    target_quantile = target_mean_degree / (n - 1)
-    return float(np.quantile(dists, target_quantile))
 
 
 # ---------------------------------------------------------------------------
@@ -252,24 +229,15 @@ def network_summary(G: nx.Graph) -> dict[str, Any]:
 
 
 def burt_constraint(G: nx.Graph) -> np.ndarray:
-    """Burt's constraint per node. Lower = more structural holes."""
-    n = G.number_of_nodes()
-    constraint = np.full(n, np.nan)
-    for i in G.nodes():
-        neighbors_i = set(G.neighbors(i))
-        if len(neighbors_i) == 0:
-            continue
-        deg_i = len(neighbors_i)
-        c_i = 0.0
-        for j in neighbors_i:
-            p_ij = 1.0 / deg_i
-            indirect = 0.0
-            for q in neighbors_i:
-                if q != j and G.has_edge(q, j):
-                    p_iq = 1.0 / deg_i
-                    deg_q = G.degree(q)
-                    p_qj = 1.0 / deg_q if deg_q > 0 else 0.0
-                    indirect += p_iq * p_qj
-            c_i += (p_ij + indirect) ** 2
-        constraint[i] = c_i
+    """Burt's constraint per node (vectorized). Lower = more structural holes."""
+    A = nx.to_numpy_array(G)
+    deg = A.sum(axis=1, keepdims=True)
+    isolated = (deg.flatten() == 0)
+
+    # Avoid division by zero for isolated nodes
+    safe_deg = np.where(deg == 0, 1.0, deg)
+    P = A / safe_deg  # P[i,j] = proportion of i's relations invested in j
+
+    constraint = ((P + P @ P) ** 2).sum(axis=1)
+    constraint[isolated] = np.nan
     return constraint

@@ -921,6 +921,10 @@ alpha_slider = pn.widgets.FloatSlider(
     name="α (hyperbolic, gamma=2α+1)", start=0.3, end=1.5, step=0.1, value=0.5,
 )
 dim_slider = pn.widgets.IntSlider(name="d (torus dimension)", start=2, end=20, step=1, value=2)
+normalize_select = pn.widgets.Select(
+    name="Normalize D", options=["None", "Mean (D/mean)", "Max (D/max)"],
+    value="Mean (D/mean)",
+)
 
 # ---------------------------------------------------------------
 # Widgets: Mechanisms
@@ -1002,6 +1006,13 @@ def run_sim(event):
         init = init_hyperbolic_gmm(n, 10, 5, 0.4, rng, alpha=alpha_slider.value)
     else:
         return
+
+    # Normalize distance matrix
+    norm_choice = normalize_select.value
+    if norm_choice == "Mean (D/mean)":
+        init = init.normalized("mean")
+    elif norm_choice == "Max (D/max)":
+        init = init.normalized("max")
 
     # Build mechanism list
     mechanisms = []
@@ -1085,7 +1096,7 @@ player.param.watch(lambda event: render_frame(event.new), "value")
 sidebar = pn.Column(
     "## Structural Holes ABM",
     "### Initialization",
-    geometry_select, n_agents, alpha_slider, dim_slider,
+    geometry_select, n_agents, alpha_slider, dim_slider, normalize_select,
     "### Mechanisms",
     toggle_homophily, lam_slider,
     toggle_triadic, tau_slider,
