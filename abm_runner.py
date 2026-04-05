@@ -36,6 +36,7 @@ def run_simulation(
     budgets: np.ndarray,
     n_steps: int,
     rng: np.random.Generator,
+    enable_decay: bool = True,
 ) -> SimHistory:
     """Run the full simulation loop.
 
@@ -45,6 +46,7 @@ def run_simulation(
         budgets: (N,) attention budget per agent.
         n_steps: number of timesteps to simulate.
         rng: random number generator.
+        enable_decay: if True (default), drop excess ties each step.
 
     Returns:
         SimHistory with sparse frames and stats for each timestep.
@@ -55,7 +57,7 @@ def run_simulation(
     stats = [_frame_stats(state)]
 
     for _ in range(n_steps):
-        state = step(state, mechanisms, rng)
+        state = step(state, mechanisms, rng, enable_decay=enable_decay)
         frames.append(sparse.csr_matrix(state.A))
         stats.append(_frame_stats(state))
 

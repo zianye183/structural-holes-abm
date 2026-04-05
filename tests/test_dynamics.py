@@ -3,7 +3,9 @@ from abm_dynamics import (
     SimState,
     mechanism_homophily,
     mechanism_triadic_closure,
+    mechanism_popularity,
     mechanism_attention_budget,
+    mechanism_attention_hard,
     decay_over_budget,
     step,
 )
@@ -72,6 +74,59 @@ def test_triadic_closure_multiple_shared():
     assert np.isclose(factor[0, 3], tau ** 2)
 
 
+# ---- Task 3b: Popularity ----
+
+def test_popularity_isolated_nodes():
+    """With no edges, all (k+1)^mu = 1^mu = 1, so factor is all 1s."""
+    D = np.zeros((3, 3))
+    state = SimState(D=D, budgets=np.array([5, 5, 5]))
+    factor = mechanism_popularity(state, mu=1.0)
+    assert factor.shape == (3, 3)
+    assert np.allclose(factor, 1.0)
+
+
+def test_popularity_high_degree_boost():
+    """Node 0 has degree 3, others have degree 1. Node 0 pairs get highest boost."""
+    D = np.zeros((4, 4))
+    state = SimState(D=D, budgets=np.full(4, 10))
+    state.A[0, 1] = state.A[1, 0] = 1
+    state.A[0, 2] = state.A[2, 0] = 1
+    state.A[0, 3] = state.A[3, 0] = 1
+    mu = 1.0
+    factor = mechanism_popularity(state, mu=mu)
+    # Node 0: k=3, pop=(3+1)^1=4. Nodes 1,2,3: k=1, pop=(1+1)^1=2.
+    assert np.isclose(factor[1, 2], 2.0 * 2.0)  # both degree-1
+    assert np.isclose(factor[0, 1], 4.0 * 2.0)  # degree-3 * degree-1
+
+
+def test_popularity_mu_zero_neutral():
+    """mu=0 means no popularity effect: factor is all 1s regardless of degree."""
+    D = np.zeros((3, 3))
+    state = SimState(D=D, budgets=np.array([5, 5, 5]))
+    state.A[0, 1] = state.A[1, 0] = 1
+    factor = mechanism_popularity(state, mu=0.0)
+    assert np.allclose(factor, 1.0)
+
+
+def test_popularity_symmetry():
+    D = np.zeros((3, 3))
+    state = SimState(D=D, budgets=np.array([5, 5, 5]))
+    state.A[0, 1] = state.A[1, 0] = 1
+    factor = mechanism_popularity(state, mu=0.5)
+    assert np.isclose(factor[0, 1], factor[1, 0])
+    assert np.isclose(factor[0, 2], factor[2, 0])
+
+
+def test_popularity_invalid_mu():
+    D = np.zeros((2, 2))
+    state = SimState(D=D, budgets=np.array([5, 5]))
+    try:
+        mechanism_popularity(state, mu=-1.0)
+        assert False, "Should have raised ValueError"
+    except ValueError:
+        pass
+
+
 # ---- Task 4: Attention Budget ----
 
 def test_budget_under_capacity():
@@ -98,6 +153,45 @@ def test_budget_symmetry():
     state = SimState(D=D, budgets=np.array([5, 5, 5]))
     factor = mechanism_attention_budget(state, beta=5.0)
     assert np.isclose(factor[0, 1], factor[1, 0])
+
+
+# ---- Task 4b: Hard Attention Budget ----
+
+def test_hard_budget_under_capacity():
+    """All agents under budget -> factor is all 1s."""
+    D = np.zeros((3, 3))
+    state = SimState(D=D, budgets=np.array([10, 10, 10]))
+    factor = mechanism_attention_hard(state)
+    assert np.allclose(factor, 1.0)
+
+
+def test_hard_budget_at_capacity():
+    """Agent 0 has degree 2 == budget 2 -> row/col zeroed out."""
+    D = np.zeros((4, 4))
+    state = SimState(D=D, budgets=np.array([2, 10, 10, 10]))
+    state.A[0, 1] = state.A[1, 0] = 1
+    state.A[0, 2] = state.A[2, 0] = 1
+    factor = mechanism_attention_hard(state)
+    # Agent 0 is at budget, can't form new ties
+    assert factor[0, 3] == 0.0
+    assert factor[3, 0] == 0.0
+    # Agents 1-3 are under budget, can still form ties with each other
+    assert factor[1, 2] == 1.0
+
+
+def test_hard_budget_no_decay():
+    """Hard cutoff with enable_decay=False should not drop existing ties."""
+    D = np.array([[0, 1, 2], [1, 0, 1], [2, 1, 0]], dtype=float)
+    state = SimState(D=D, budgets=np.array([1, 1, 1]))
+    # Agent 0 already has 2 ties, over budget of 1
+    state.A[0, 1] = state.A[1, 0] = 1
+    state.A[0, 2] = state.A[2, 0] = 1
+    mechanisms = [lambda s: mechanism_attention_hard(s)]
+    rng = np.random.default_rng(42)
+    new_state = step(state, mechanisms, rng, enable_decay=False)
+    # Existing ties should be preserved (no decay)
+    assert new_state.A[0, 1] == 1.0
+    assert new_state.A[0, 2] == 1.0
 
 
 # ---- Task 5: Tie Decay ----

@@ -54,7 +54,7 @@ normalize_select = pn.widgets.Select(
 # Widgets: Mechanisms
 # ---------------------------------------------------------------
 toggle_homophily = pn.widgets.Checkbox(name="Homophily", value=True)
-lam_slider = pn.widgets.FloatSlider(name="λ (decay rate)", start=0.1, end=100.0, step=0.1, value=3.0)
+lam_slider = pn.widgets.FloatSlider(name="λ (decay rate)", start=0.1, end=00.0, step=0.1, value=3.0)
 
 toggle_triadic = pn.widgets.Checkbox(name="Triadic Closure", value=False)
 tau_slider = pn.widgets.FloatSlider(name="τ (boost per shared neighbor)", start=1.0, end=3.0, step=0.1, value=1.5)

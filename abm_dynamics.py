@@ -85,6 +85,33 @@ def mechanism_triadic_closure(state: SimState, tau: float) -> np.ndarray:
     return tau ** shared
 
 
+def mechanism_popularity(state: SimState, mu: float) -> np.ndarray:
+    """Popularity (preferential attachment) factor: popular nodes attract ties.
+
+    Factor[i,j] = (k_i + 1)^mu * (k_j + 1)^mu
+
+    The +1 ensures isolated nodes still have nonzero probability.
+    Higher mu = stronger rich-get-richer effect.
+
+    Args:
+        state: current simulation state.
+        mu: popularity exponent. Must be >= 0.
+            mu == 0 is neutral (factor = 1 everywhere).
+            mu > 0 favors high-degree nodes.
+
+    Returns:
+        (N, N) factor matrix. Values >= 1.0 (boost only).
+
+    Raises:
+        ValueError: if mu < 0.
+    """
+    if mu < 0:
+        raise ValueError(f"mu must be >= 0 (got {mu})")
+    k = state.degrees.astype(np.float64)
+    pop = (k + 1.0) ** mu
+    return pop[:, np.newaxis] * pop[np.newaxis, :]
+
+
 def mechanism_attention_budget(state: SimState, beta: float) -> np.ndarray:
     """Attention budget factor: penalize tie formation when over capacity.
 
@@ -101,6 +128,22 @@ def mechanism_attention_budget(state: SimState, beta: float) -> np.ndarray:
     k = state.degrees.astype(np.float64)
     sigma = 1.0 / (1.0 + np.exp(beta * (k - state.budgets)))
     return sigma[:, np.newaxis] * sigma[np.newaxis, :]
+
+
+def mechanism_attention_hard(state: SimState) -> np.ndarray:
+    """Hard attention budget: agents at or over budget cannot form new ties.
+
+    Factor[i,j] = open_i * open_j
+    where open_i = 1 if k_i < b_i, else 0.
+
+    Args:
+        state: current simulation state.
+
+    Returns:
+        (N, N) factor matrix. Values in {0, 1}.
+    """
+    open_slots = (state.degrees < state.budgets).astype(np.float64)
+    return open_slots[:, np.newaxis] * open_slots[np.newaxis, :]
 
 
 # ---------------------------------------------------------------------------
@@ -155,19 +198,21 @@ def step(
     state: SimState,
     mechanisms: list[Mechanism],
     rng: np.random.Generator,
+    enable_decay: bool = True,
 ) -> SimState:
     """Execute one simulation timestep.
 
     1. Compute formation probability P by multiplying all mechanism factors.
     2. Mask out existing ties (only form NEW edges).
     3. Sample new edges from P.
-    4. Apply tie decay for over-budget agents.
+    4. Optionally apply tie decay for over-budget agents.
     5. Return new state with updated A and incremented t.
 
     Args:
         state: current simulation state.
         mechanisms: list of mechanism functions, each returns (N, N) factor.
         rng: random number generator.
+        enable_decay: if True (default), drop excess ties each step.
 
     Returns:
         New SimState with updated adjacency and t+1.
@@ -194,8 +239,9 @@ def step(
     # Combine with existing adjacency
     A_new = np.maximum(state.A, new_edges.astype(np.float64))
 
-    # Apply decay
-    decayed_state = SimState(D=state.D, budgets=state.budgets, A=A_new, t=state.t)
-    A_final = decay_over_budget(decayed_state, rng)
+    # Optionally apply decay
+    if enable_decay:
+        decayed_state = SimState(D=state.D, budgets=state.budgets, A=A_new, t=state.t)
+        A_new = decay_over_budget(decayed_state, rng)
 
-    return SimState(D=state.D, budgets=state.budgets, A=A_final, t=state.t + 1)
+    return SimState(D=state.D, budgets=state.budgets, A=A_new, t=state.t + 1)

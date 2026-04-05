@@ -238,6 +238,9 @@ def burt_constraint(G: nx.Graph) -> np.ndarray:
     safe_deg = np.where(deg == 0, 1.0, deg)
     P = A / safe_deg  # P[i,j] = proportion of i's relations invested in j
 
-    constraint = ((P + P @ P) ** 2).sum(axis=1)
+    # c_ij = (p_ij + Σ_{q≠i,j} p_iq·p_qj)², summed over j ∈ N(i) only
+    M = P + P @ P
+    np.fill_diagonal(M, 0.0)
+    constraint = ((M ** 2) * A).sum(axis=1)
     constraint[isolated] = np.nan
     return constraint
