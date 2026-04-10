@@ -228,19 +228,67 @@ def network_summary(G: nx.Graph) -> dict[str, Any]:
     }
 
 
+def _constraint_arrays(A: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Core constraint computation from adjacency matrix.
+
+    Returns (direct, indirect, isolated) where:
+        direct[i,j]   = p_ij  (proportion of i's network invested in j)
+        indirect[i,j]  = Σ_q p_iq·p_qj  (indirect reinforcement through shared contacts)
+        isolated[i]    = True if node i has degree 0
+    """
+    deg = A.sum(axis=1, keepdims=True)
+    isolated = (deg.flatten() == 0)
+    safe_deg = np.where(deg == 0, 1.0, deg)
+    direct = A / safe_deg
+    indirect = direct @ direct
+    np.fill_diagonal(indirect, 0.0)
+    return direct, indirect, isolated
+
+
 def burt_constraint(G: nx.Graph) -> np.ndarray:
     """Burt's constraint per node (vectorized). Lower = more structural holes."""
     A = nx.to_numpy_array(G)
-    deg = A.sum(axis=1, keepdims=True)
-    isolated = (deg.flatten() == 0)
-
-    # Avoid division by zero for isolated nodes
-    safe_deg = np.where(deg == 0, 1.0, deg)
-    P = A / safe_deg  # P[i,j] = proportion of i's relations invested in j
-
-    # c_ij = (p_ij + Σ_{q≠i,j} p_iq·p_qj)², summed over j ∈ N(i) only
-    M = P + P @ P
-    np.fill_diagonal(M, 0.0)
+    direct, indirect, isolated = _constraint_arrays(A)
+    M = direct + indirect
     constraint = ((M ** 2) * A).sum(axis=1)
-    constraint[isolated] = np.nan
+    constraint[isolated] = 1.0
     return constraint
+
+
+def burt_constraint_decomposed(G: nx.Graph) -> dict[str, np.ndarray]:
+    """Decompose Burt's constraint into size, density, and hierarchy components.
+
+    From Burt (1998a), expanding c_ij = (p_ij + Σ_q p_iq·p_qj)²:
+
+        C_i = Σ_j p_ij²                          (C-size: Herfindahl concentration)
+            + 2·Σ_j p_ij·(Σ_q p_iq·p_qj)         (C-density: direct × indirect cross-term)
+            + Σ_j (Σ_q p_iq·p_qj)²                (C-hierarchy: indirect concentration)
+
+    All sums are over j ∈ N(i) only.
+    C-size + C-density + C-hierarchy = C_i (aggregate constraint).
+
+    Returns dict with per-node arrays:
+        constraint, c_size, c_density, c_hierarchy.
+        Isolated nodes get constraint=1.0 (no access to structural holes),
+        with the full value assigned to c_size.
+    """
+    A = nx.to_numpy_array(G)
+    direct, indirect, isolated = _constraint_arrays(A)
+
+    c_size = ((direct ** 2) * A).sum(axis=1)
+    c_density = (2 * direct * indirect * A).sum(axis=1)
+    c_hierarchy = ((indirect ** 2) * A).sum(axis=1)
+    constraint = c_size + c_density + c_hierarchy
+
+    # Isolates: max constraint, all from "size" (no network at all)
+    constraint[isolated] = 1.0
+    c_size[isolated] = 1.0
+    c_density[isolated] = 0.0
+    c_hierarchy[isolated] = 0.0
+
+    return {
+        "constraint": constraint,
+        "c_size": c_size,
+        "c_density": c_density,
+        "c_hierarchy": c_hierarchy,
+    }

@@ -38,3 +38,40 @@ def test_run_records_stats():
     assert len(history.stats) == 6
     assert "mean_degree" in history.stats[0]
     assert "n_edges" in history.stats[0]
+
+
+def test_run_records_constraint_decomposition():
+    rng = np.random.default_rng(42)
+    init = init_torus_uniform(n=30, d=2, rng=rng)
+    mechanisms = [
+        lambda s: mechanism_homophily(s, lam=5.0),
+        lambda s: mechanism_attention_budget(s, beta=3.0),
+    ]
+    history = run_simulation(
+        init_result=init,
+        mechanisms=mechanisms,
+        budgets=np.full(30, 8),
+        n_steps=5,
+        rng=np.random.default_rng(42),
+    )
+    # node_metrics recorded for each frame
+    assert len(history.node_metrics) == 6
+    nm = history.node_metrics[5]
+    assert nm["degrees"].shape == (30,)
+    assert nm["constraint"].shape == (30,)
+    assert nm["c_size"].shape == (30,)
+    assert nm["c_density"].shape == (30,)
+    assert nm["c_hierarchy"].shape == (30,)
+
+    # Aggregate stats include constraint decomposition
+    st = history.stats[5]
+    assert "mean_constraint" in st
+    assert "mean_c_size" in st
+    assert "mean_c_density" in st
+    assert "mean_c_hierarchy" in st
+
+    # Decomposition sums to total in aggregate stats
+    assert abs(
+        st["mean_c_size"] + st["mean_c_density"] + st["mean_c_hierarchy"]
+        - st["mean_constraint"]
+    ) < 0.01
