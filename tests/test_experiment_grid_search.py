@@ -1,9 +1,10 @@
 import numpy as np
 import pytest
 from abm_core import init_torus_uniform
-from abm_dynamics import SimState
+from abm_dynamics import SimState, mechanism_homophily
+from abm_runner import run_simulation
 
-from experiment_grid_search import build_mechanisms
+from experiment_grid_search import build_mechanisms, extract_snapshot_metrics
 
 
 def _make_state(n=10, d=2, seed=0):
@@ -40,12 +41,6 @@ def test_build_mechanisms_late_binding_safe():
     out_low = mechs_low[0](state)
     out_high = mechs_high[0](state)
     assert not np.allclose(out_low, out_high)
-
-
-from abm_dynamics import mechanism_homophily
-from abm_runner import run_simulation
-
-from experiment_grid_search import extract_snapshot_metrics
 
 
 def _tiny_history(n_steps=10):
