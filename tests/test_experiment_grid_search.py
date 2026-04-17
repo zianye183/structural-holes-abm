@@ -4,7 +4,7 @@ from abm_core import init_torus_uniform
 from abm_dynamics import SimState, mechanism_homophily
 from abm_runner import run_simulation
 
-from experiment_grid_search import build_mechanisms, extract_snapshot_metrics, summarize_metrics, save_snapshots
+from experiment_grid_search import build_mechanisms, extract_snapshot_metrics, summarize_metrics, save_snapshots, run_grid_cell
 
 
 def _make_state(n=10, d=2, seed=0):
@@ -135,3 +135,47 @@ def test_save_snapshots_frames_roundtrip(tmp_path):
     rebuilt = rebuilt + rebuilt.T
     expected = history.frames[10].toarray()
     assert np.array_equal(rebuilt, expected)
+
+
+def test_run_grid_cell_writes_file_and_returns_rows(tmp_path):
+    rng = np.random.default_rng(0)
+    init = init_torus_uniform(n=20, d=2, rng=rng)
+    rows = run_grid_cell(
+        init_result=init,
+        b_homophily=2.0,
+        b_triadic=0.5,
+        b_popularity=0.0,
+        budget=5,
+        n_steps=20,
+        snapshot_times=[0, 10, 20],
+        sim_seed=42,
+        out_path=tmp_path / "test_run.npz",
+    )
+    # File written
+    assert (tmp_path / "test_run.npz").exists()
+    # One row per snapshot time
+    assert len(rows) == 3
+    # Each row has the configured params + stats
+    for i, row in enumerate(rows):
+        assert row["b_homophily"] == 2.0
+        assert row["b_triadic"] == 0.5
+        assert row["b_popularity"] == 0.0
+        assert row["t"] == [0, 10, 20][i]
+        assert "mean_constraint" in row
+        assert "std_c_hierarchy" in row
+
+
+def test_run_grid_cell_reproducible(tmp_path):
+    rng = np.random.default_rng(0)
+    init = init_torus_uniform(n=20, d=2, rng=rng)
+    rows1 = run_grid_cell(
+        init_result=init, b_homophily=2.0, b_triadic=0.0, b_popularity=0.0,
+        budget=5, n_steps=10, snapshot_times=[0, 10], sim_seed=99,
+        out_path=tmp_path / "a.npz",
+    )
+    rows2 = run_grid_cell(
+        init_result=init, b_homophily=2.0, b_triadic=0.0, b_popularity=0.0,
+        budget=5, n_steps=10, snapshot_times=[0, 10], sim_seed=99,
+        out_path=tmp_path / "b.npz",
+    )
+    assert rows1[-1]["mean_constraint"] == rows2[-1]["mean_constraint"]

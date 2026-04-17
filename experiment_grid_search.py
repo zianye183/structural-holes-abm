@@ -9,13 +9,15 @@ from pathlib import Path
 import numpy as np
 from scipy import sparse
 
+from abm_core import InitResult
 from abm_dynamics import (
     Mechanism,
     mechanism_homophily,
     mechanism_triadic_closure,
     mechanism_popularity,
+    constraint_attention_hard,
 )
-from abm_runner import SimHistory
+from abm_runner import SimHistory, run_simulation
 
 
 def build_mechanisms(
@@ -125,3 +127,54 @@ def save_snapshots(
         frame_ids=np.concatenate(fid_list) if fid_list else np.array([], dtype=np.int32),
         n=np.int32(history.init_result.n),
     )
+
+
+def run_grid_cell(
+    init_result: InitResult,
+    b_homophily: float,
+    b_triadic: float,
+    b_popularity: float,
+    budget: int,
+    n_steps: int,
+    snapshot_times: list[int],
+    sim_seed: int,
+    out_path: Path | str,
+) -> list[dict]:
+    """Run a single (cell, replicate) and persist its snapshots.
+
+    Pipeline:
+        1. Build the mechanism list (zero-coef mechanisms omitted).
+        2. Apply constraint_attention_hard with uniform `budget`.
+        3. Run the simulation for `n_steps` steps with a fresh RNG seeded
+           from `sim_seed`.
+        4. Save snapshots to `out_path`.
+        5. Return one summary-row dict per snapshot timestep.
+
+    The returned rows include the configured coefficients so they can be
+    appended directly to a tidy DataFrame across the whole grid.
+    """
+    mechanisms = build_mechanisms(b_homophily, b_triadic, b_popularity)
+    budgets = np.full(init_result.n, budget)
+    rng = np.random.default_rng(sim_seed)
+    history = run_simulation(
+        init_result=init_result,
+        mechanisms=mechanisms,
+        budgets=budgets,
+        n_steps=n_steps,
+        rng=rng,
+        constraints=[constraint_attention_hard],
+        enable_decay=True,
+    )
+    save_snapshots(out_path, history, snapshot_times)
+
+    rows: list[dict] = []
+    for t in snapshot_times:
+        row = {
+            "b_homophily": b_homophily,
+            "b_triadic": b_triadic,
+            "b_popularity": b_popularity,
+            "t": t,
+            **summarize_metrics(history.node_metrics[t]),
+        }
+        rows.append(row)
+    return rows
