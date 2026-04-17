@@ -4,7 +4,7 @@ from abm_core import init_torus_uniform
 from abm_dynamics import SimState, mechanism_homophily
 from abm_runner import run_simulation
 
-from experiment_grid_search import build_mechanisms, extract_snapshot_metrics
+from experiment_grid_search import build_mechanisms, extract_snapshot_metrics, summarize_metrics
 
 
 def _make_state(n=10, d=2, seed=0):
@@ -76,3 +76,34 @@ def test_extract_snapshot_metrics_values_match_history():
     snap = extract_snapshot_metrics(history, [0, 10])
     assert np.allclose(snap["constraint"][0], history.node_metrics[0]["constraint"])
     assert np.allclose(snap["constraint"][1], history.node_metrics[10]["constraint"])
+
+
+def test_summarize_metrics_returns_12_columns():
+    snap_for_one_t = {
+        "constraint":  np.array([0.1, 0.2, 0.3, 0.4]),
+        "c_size":      np.array([0.05, 0.1, 0.15, 0.2]),
+        "c_density":   np.array([0.02, 0.04, 0.06, 0.08]),
+        "c_hierarchy": np.array([0.03, 0.06, 0.09, 0.12]),
+    }
+    summary = summarize_metrics(snap_for_one_t)
+    expected_keys = {
+        "mean_constraint", "median_constraint", "std_constraint",
+        "mean_c_size", "median_c_size", "std_c_size",
+        "mean_c_density", "median_c_density", "std_c_density",
+        "mean_c_hierarchy", "median_c_hierarchy", "std_c_hierarchy",
+    }
+    assert set(summary.keys()) == expected_keys
+
+
+def test_summarize_metrics_correct_values():
+    snap = {
+        "constraint":  np.array([1.0, 2.0, 3.0, 4.0]),
+        "c_size":      np.zeros(4),
+        "c_density":   np.zeros(4),
+        "c_hierarchy": np.zeros(4),
+    }
+    summary = summarize_metrics(snap)
+    assert summary["mean_constraint"] == pytest.approx(2.5)
+    assert summary["median_constraint"] == pytest.approx(2.5)
+    assert summary["std_constraint"] == pytest.approx(np.std([1.0, 2.0, 3.0, 4.0]))
+    assert summary["mean_c_size"] == 0.0

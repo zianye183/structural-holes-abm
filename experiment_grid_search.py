@@ -36,6 +36,25 @@ def build_mechanisms(
     return mechs
 
 
+def summarize_metrics(metrics_at_t: dict[str, np.ndarray]) -> dict[str, float]:
+    """Compute mean/median/std for each of the 4 metrics at one timestep.
+
+    Args:
+        metrics_at_t: dict with keys constraint, c_size, c_density, c_hierarchy,
+                      each value a 1-D array of per-node values.
+
+    Returns:
+        dict with 12 float entries: {mean,median,std}_{constraint,c_size,c_density,c_hierarchy}.
+    """
+    out: dict[str, float] = {}
+    for name in ("constraint", "c_size", "c_density", "c_hierarchy"):
+        arr = metrics_at_t[name]
+        out[f"mean_{name}"] = float(arr.mean())
+        out[f"median_{name}"] = float(np.median(arr))
+        out[f"std_{name}"] = float(arr.std())
+    return out
+
+
 def extract_snapshot_metrics(
     history: SimHistory,
     snapshot_times: list[int],
