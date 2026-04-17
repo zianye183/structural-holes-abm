@@ -32,10 +32,11 @@ def test_build_mechanisms_callables_return_correct_shape():
 
 
 def test_build_mechanisms_late_binding_safe():
-    # closures must bind the coefficient at definition time, not loop variable
+    # If b were captured by reference instead of by default-arg value,
+    # both closures would end up using the same coefficient. Verify they don't.
     state = _make_state(n=8)
-    mechs = build_mechanisms(b_homophily=3.0, b_triadic=1.5, b_popularity=0.6)
-    # if late-binding bug, all three would use the same b — call them and check
-    # outputs differ across mechanisms
-    outs = [m(state) for m in mechs]
-    assert not np.allclose(outs[0], outs[1])
+    mechs_low = build_mechanisms(b_homophily=1.0, b_triadic=0.0, b_popularity=0.0)
+    mechs_high = build_mechanisms(b_homophily=10.0, b_triadic=0.0, b_popularity=0.0)
+    out_low = mechs_low[0](state)
+    out_high = mechs_high[0](state)
+    assert not np.allclose(out_low, out_high)
