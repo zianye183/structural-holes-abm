@@ -4,7 +4,10 @@ Helpers for the dynamics grid-search experiment.
 Pure functions plus a single-cell runner. No plotting, no notebook-only logic.
 """
 
+from pathlib import Path
+
 import numpy as np
+from scipy import sparse
 
 from abm_dynamics import (
     Mechanism,
@@ -79,3 +82,46 @@ def extract_snapshot_metrics(
     for name in ("constraint", "c_size", "c_density", "c_hierarchy"):
         out[name] = np.array([history.node_metrics[t][name] for t in snapshot_times])
     return out
+
+
+def save_snapshots(
+    out_path: Path | str,
+    history: SimHistory,
+    snapshot_times: list[int],
+) -> None:
+    """Persist per-node metrics + sparse frames at snapshot timesteps to a single npz.
+
+    File layout:
+        times       : (T,) int32  — snapshot timesteps
+        constraint  : (T, N) float64
+        c_size      : (T, N) float64
+        c_density   : (T, N) float64
+        c_hierarchy : (T, N) float64
+        rows, cols  : concatenated triu indices for all T frames
+        frame_ids   : (len(rows),) int32 — which snapshot each edge belongs to (0..T-1)
+        n           : scalar — number of agents
+    """
+    out = Path(out_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    snap = extract_snapshot_metrics(history, snapshot_times)
+
+    rows_list, cols_list, fid_list = [], [], []
+    for i, t in enumerate(snapshot_times):
+        coo = sparse.triu(history.frames[t], k=1).tocoo()
+        rows_list.append(coo.row.astype(np.int32))
+        cols_list.append(coo.col.astype(np.int32))
+        fid_list.append(np.full(len(coo.row), i, dtype=np.int32))
+
+    np.savez_compressed(
+        out,
+        times=snap["times"],
+        constraint=snap["constraint"],
+        c_size=snap["c_size"],
+        c_density=snap["c_density"],
+        c_hierarchy=snap["c_hierarchy"],
+        rows=np.concatenate(rows_list) if rows_list else np.array([], dtype=np.int32),
+        cols=np.concatenate(cols_list) if cols_list else np.array([], dtype=np.int32),
+        frame_ids=np.concatenate(fid_list) if fid_list else np.array([], dtype=np.int32),
+        n=np.int32(history.init_result.n),
+    )

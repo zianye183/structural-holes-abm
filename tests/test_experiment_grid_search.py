@@ -4,7 +4,7 @@ from abm_core import init_torus_uniform
 from abm_dynamics import SimState, mechanism_homophily
 from abm_runner import run_simulation
 
-from experiment_grid_search import build_mechanisms, extract_snapshot_metrics, summarize_metrics
+from experiment_grid_search import build_mechanisms, extract_snapshot_metrics, summarize_metrics, save_snapshots
 
 
 def _make_state(n=10, d=2, seed=0):
@@ -107,3 +107,31 @@ def test_summarize_metrics_correct_values():
     assert summary["median_constraint"] == pytest.approx(2.5)
     assert summary["std_constraint"] == pytest.approx(np.std([1.0, 2.0, 3.0, 4.0]))
     assert summary["mean_c_size"] == 0.0
+
+
+def test_save_snapshots_writes_npz(tmp_path):
+    history = _tiny_history(n_steps=10)
+    out = tmp_path / "snap.npz"
+    save_snapshots(out, history, snapshot_times=[0, 5, 10])
+    assert out.exists()
+    data = np.load(out)
+    assert list(data["times"]) == [0, 5, 10]
+    assert data["constraint"].shape == (3, 15)
+    assert data["n"].item() == 15
+    # Sparse frames stored as concatenated triu COO with frame_ids in {0,1,2}
+    assert set(data["frame_ids"].tolist()).issubset({0, 1, 2})
+
+
+def test_save_snapshots_frames_roundtrip(tmp_path):
+    history = _tiny_history(n_steps=10)
+    out = tmp_path / "snap.npz"
+    save_snapshots(out, history, snapshot_times=[0, 10])
+    data = np.load(out)
+    # Reconstruct frame at index 1 (t=10) from COO
+    mask = data["frame_ids"] == 1
+    n = int(data["n"].item())
+    rebuilt = np.zeros((n, n), dtype=np.float64)
+    rebuilt[data["rows"][mask], data["cols"][mask]] = 1.0
+    rebuilt = rebuilt + rebuilt.T
+    expected = history.frames[10].toarray()
+    assert np.array_equal(rebuilt, expected)
