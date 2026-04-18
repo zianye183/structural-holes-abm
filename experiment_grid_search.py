@@ -42,14 +42,20 @@ def build_mechanisms(
 
 
 def summarize_metrics(metrics_at_t: dict[str, np.ndarray]) -> dict[str, float]:
-    """Compute mean/median/std for each of the 4 metrics at one timestep.
+    """Compute per-metric distribution summaries at one timestep.
+
+    For each of {constraint, c_size, c_density, c_hierarchy} emits
+    mean/median/std/p10/p90 (20 entries total). Also emits
+    frac_constraint_lt_0.1 — the share of agents whose constraint is
+    strictly below 0.1, a headcount proxy for brokerage used as the
+    pilot's primary tail statistic.
 
     Args:
         metrics_at_t: dict with keys constraint, c_size, c_density, c_hierarchy,
                       each value a 1-D array of per-node values.
 
     Returns:
-        dict with 12 float entries: {mean,median,std}_{constraint,c_size,c_density,c_hierarchy}.
+        dict with 21 float entries.
     """
     out: dict[str, float] = {}
     for name in ("constraint", "c_size", "c_density", "c_hierarchy"):
@@ -57,6 +63,9 @@ def summarize_metrics(metrics_at_t: dict[str, np.ndarray]) -> dict[str, float]:
         out[f"mean_{name}"] = float(arr.mean())
         out[f"median_{name}"] = float(np.median(arr))
         out[f"std_{name}"] = float(arr.std())
+        out[f"p10_{name}"] = float(np.quantile(arr, 0.10))
+        out[f"p90_{name}"] = float(np.quantile(arr, 0.90))
+    out["frac_constraint_lt_0.1"] = float((metrics_at_t["constraint"] < 0.1).mean())
     return out
 
 

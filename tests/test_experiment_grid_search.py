@@ -78,7 +78,7 @@ def test_extract_snapshot_metrics_values_match_history():
     assert np.allclose(snap["constraint"][1], history.node_metrics[10]["constraint"])
 
 
-def test_summarize_metrics_returns_12_columns():
+def test_summarize_metrics_returns_expected_columns():
     snap_for_one_t = {
         "constraint":  np.array([0.1, 0.2, 0.3, 0.4]),
         "c_size":      np.array([0.05, 0.1, 0.15, 0.2]),
@@ -86,12 +86,10 @@ def test_summarize_metrics_returns_12_columns():
         "c_hierarchy": np.array([0.03, 0.06, 0.09, 0.12]),
     }
     summary = summarize_metrics(snap_for_one_t)
-    expected_keys = {
-        "mean_constraint", "median_constraint", "std_constraint",
-        "mean_c_size", "median_c_size", "std_c_size",
-        "mean_c_density", "median_c_density", "std_c_density",
-        "mean_c_hierarchy", "median_c_hierarchy", "std_c_hierarchy",
-    }
+    per_metric_stats = {"mean", "median", "std", "p10", "p90"}
+    metrics = {"constraint", "c_size", "c_density", "c_hierarchy"}
+    expected_keys = {f"{stat}_{m}" for stat in per_metric_stats for m in metrics}
+    expected_keys.add("frac_constraint_lt_0.1")
     assert set(summary.keys()) == expected_keys
 
 
@@ -107,6 +105,32 @@ def test_summarize_metrics_correct_values():
     assert summary["median_constraint"] == pytest.approx(2.5)
     assert summary["std_constraint"] == pytest.approx(np.std([1.0, 2.0, 3.0, 4.0]))
     assert summary["mean_c_size"] == 0.0
+
+
+def test_summarize_metrics_includes_tail_stats():
+    snap = {
+        "constraint":  np.linspace(0.0, 1.0, 101),  # p10=0.10, p90=0.90, median=0.50
+        "c_size":      np.zeros(101),
+        "c_density":   np.zeros(101),
+        "c_hierarchy": np.zeros(101),
+    }
+    summary = summarize_metrics(snap)
+    assert summary["p10_constraint"] == pytest.approx(0.10)
+    assert summary["p90_constraint"] == pytest.approx(0.90)
+    # 10 values strictly < 0.1: the samples 0.00, 0.01, ..., 0.09 (10 points)
+    assert summary["frac_constraint_lt_0.1"] == pytest.approx(10 / 101)
+
+
+def test_summarize_metrics_frac_threshold_boundary():
+    snap = {
+        "constraint":  np.array([0.05, 0.09, 0.10, 0.11, 0.50]),
+        "c_size":      np.zeros(5),
+        "c_density":   np.zeros(5),
+        "c_hierarchy": np.zeros(5),
+    }
+    summary = summarize_metrics(snap)
+    # strict less-than: 0.05 and 0.09 qualify; 0.10 does not
+    assert summary["frac_constraint_lt_0.1"] == pytest.approx(2 / 5)
 
 
 def test_save_snapshots_writes_npz(tmp_path):
