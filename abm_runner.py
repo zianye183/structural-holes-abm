@@ -9,7 +9,7 @@ import numpy as np
 from scipy import sparse
 
 from abm_core import InitResult, burt_constraint_decomposed
-from abm_dynamics import SimState, Mechanism, step
+from abm_dynamics import SimState, Mechanism, Constraint, step
 
 
 @dataclass
@@ -40,16 +40,20 @@ def run_simulation(
     budgets: np.ndarray,
     n_steps: int,
     rng: np.random.Generator,
+    intercept: float = -5.0,
+    constraints: list[Constraint] | None = None,
     enable_decay: bool = True,
 ) -> SimHistory:
     """Run the full simulation loop.
 
     Args:
         init_result: output of any init_* function from abm_core.
-        mechanisms: list of mechanism functions to compose.
+        mechanisms: list of mechanism functions (log-odds contributors).
         budgets: (N,) attention budget per agent.
         n_steps: number of timesteps to simulate.
         rng: random number generator.
+        intercept: base rate in log-odds space. Default -5.0.
+        constraints: list of constraint functions (post-hoc masks).
         enable_decay: if True (default), drop excess ties each step.
 
     Returns:
@@ -66,7 +70,8 @@ def run_simulation(
     metrics_list.append(frame_metrics)
 
     for _ in range(n_steps):
-        state = step(state, mechanisms, rng, enable_decay=enable_decay)
+        state = step(state, mechanisms, rng, intercept=intercept,
+                     constraints=constraints, enable_decay=enable_decay)
         frames.append(sparse.csr_matrix(state.A))
         frame_stats, frame_metrics = _compute_frame(state)
         stats_list.append(frame_stats)

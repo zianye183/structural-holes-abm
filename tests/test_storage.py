@@ -3,7 +3,7 @@
 import os
 import numpy as np
 from abm_core import init_torus_uniform
-from abm_dynamics import mechanism_homophily, mechanism_attention_hard
+from abm_dynamics import mechanism_homophily, constraint_attention_hard
 from abm_runner import run_simulation
 from abm_storage import save_simulation, load_simulation
 
@@ -12,8 +12,10 @@ def _run_small_sim():
     rng = np.random.default_rng(42)
     init = init_torus_uniform(n=20, d=2, rng=rng)
     mechanisms = [
-        lambda s: mechanism_homophily(s, lam=5.0),
-        lambda s: mechanism_attention_hard(s),
+        lambda s: mechanism_homophily(s, b_homophily=5.0),
+    ]
+    constraints = [
+        lambda s: constraint_attention_hard(s),
     ]
     return run_simulation(
         init_result=init,
@@ -21,6 +23,8 @@ def _run_small_sim():
         budgets=np.full(20, 6),
         n_steps=5,
         rng=np.random.default_rng(42),
+        intercept=-3.0,
+        constraints=constraints,
         enable_decay=False,
     )
 

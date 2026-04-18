@@ -7,3 +7,13 @@ matplotlib-*/
 
 # Simulation output data
 simulations/
+
+# Local Claude Code settings and scratch
+.claude/
+.pytest_cache/
+
+# Notebook / figure scratch
+* copy.ipynb
+* copy [0-9].ipynb
+output.png
+output2.png

@@ -1,8 +1,12 @@
 """
 Modular dynamics engine for the structural holes ABM.
 
-Each mechanism is a function: (SimState, params) -> (N, N) factor matrix.
-Mechanisms are multiplied together to form the tie formation probability P.
+Each mechanism is a function: (SimState, params) -> (N, N) log-odds contribution.
+Mechanisms are summed (with an intercept) to form log-odds, then passed through
+the sigmoid to produce tie formation probability P.
+
+Constraints (attention budget) are applied as post-hoc multiplicative masks
+after the sigmoid, since they represent capacity limits rather than predictors.
 """
 
 from dataclasses import dataclass, field
@@ -43,77 +47,88 @@ class SimState:
 
 
 # ---------------------------------------------------------------------------
-# Mechanisms — each returns an (N, N) factor matrix
+# Mechanisms — each returns an (N, N) additive log-odds contribution
 # ---------------------------------------------------------------------------
 
-def mechanism_homophily(state: SimState, lam: float) -> np.ndarray:
-    """Homophily factor: P(i,j) = exp(-lam * d_ij).
+def mechanism_homophily(
+    state: SimState, b_homophily: float, epsilon: float = 0.1
+) -> np.ndarray:
+    """Homophily log-odds: closer agents get higher tie probability.
+
+    Contribution[i,j] = b_homophily * (1 / (d_ij + epsilon))
 
     Args:
         state: current simulation state.
-        lam: decay rate. Higher = stronger preference for similar agents.
+        b_homophily: coefficient. Higher = stronger preference for nearby agents.
+        epsilon: small constant to prevent division by zero and bound the
+                 contribution for very small distances.
 
     Returns:
-        (N, N) factor matrix. Diagonal is zero.
+        (N, N) additive log-odds matrix. Diagonal is -inf (no self-ties).
     """
-    factor = np.exp(-lam * state.D)
-    np.fill_diagonal(factor, 0.0)
-    return factor
+    contribution = b_homophily * (1.0 / (state.D + epsilon))
+    np.fill_diagonal(contribution, -1e9)
+    return contribution
 
 
-def mechanism_triadic_closure(state: SimState, tau: float) -> np.ndarray:
-    """Triadic closure factor: boost by tau per shared neighbor.
+def mechanism_triadic_closure(
+    state: SimState, b_triadic: float
+) -> np.ndarray:
+    """Triadic closure log-odds: boost per shared neighbor.
 
-    shared_neighbors[i,k] = (A @ A)[i,k] = number of shared neighbors.
-    Factor = tau ^ shared_neighbors.
+    Contribution[i,j] = b_triadic * shared_neighbors(i,j)
 
     Args:
         state: current simulation state.
-        tau: boost factor per shared neighbor. Must be >= 1.0.
-             tau > 1 encourages closure; tau == 1 is neutral.
+        b_triadic: coefficient per shared neighbor. Must be >= 0.
 
     Returns:
-        (N, N) factor matrix. Values >= 1.0 (no penalty, only boost).
+        (N, N) additive log-odds matrix. Values >= 0.
 
     Raises:
-        ValueError: if tau < 1.0.
+        ValueError: if b_triadic < 0.
     """
-    if tau < 1.0:
-        raise ValueError(f"tau must be >= 1.0 (got {tau})")
+    if b_triadic < 0:
+        raise ValueError(f"b_triadic must be >= 0 (got {b_triadic})")
     shared = state.A @ state.A
     np.fill_diagonal(shared, 0.0)
-    return tau ** shared
+    return b_triadic * shared
 
 
-def mechanism_popularity(state: SimState, mu: float) -> np.ndarray:
-    """Popularity (preferential attachment) factor: popular nodes attract ties.
+def mechanism_popularity(
+    state: SimState, b_popularity: float
+) -> np.ndarray:
+    """Popularity log-odds: popular targets attract ties (asymmetric).
 
-    Factor[i,j] = (k_i + 1)^mu * (k_j + 1)^mu
+    Contribution[i,j] = b_popularity * k_j
 
-    The +1 ensures isolated nodes still have nonzero probability.
-    Higher mu = stronger rich-get-richer effect.
+    Only the target node's degree matters (preferential attachment).
 
     Args:
         state: current simulation state.
-        mu: popularity exponent. Must be >= 0.
-            mu == 0 is neutral (factor = 1 everywhere).
-            mu > 0 favors high-degree nodes.
+        b_popularity: coefficient. Must be >= 0.
 
     Returns:
-        (N, N) factor matrix. Values >= 1.0 (boost only).
+        (N, N) additive log-odds matrix. Each column j has the same value.
 
     Raises:
-        ValueError: if mu < 0.
+        ValueError: if b_popularity < 0.
     """
-    if mu < 0:
-        raise ValueError(f"mu must be >= 0 (got {mu})")
+    if b_popularity < 0:
+        raise ValueError(f"b_popularity must be >= 0 (got {b_popularity})")
     k = state.degrees.astype(np.float64)
-    pop = (k + 1.0) ** mu
-    return pop[:, np.newaxis] * pop[np.newaxis, :]
+    contrib = np.broadcast_to(
+        b_popularity * k[np.newaxis, :], (state.n, state.n)
+    ).copy()
+    return contrib
 
 
-def mechanism_attention_budget(state: SimState, beta: float) -> np.ndarray:
-    """Attention budget factor: penalize tie formation when over capacity.
+# ---------------------------------------------------------------------------
+# Constraints — post-hoc multiplicative masks applied after sigmoid
+# ---------------------------------------------------------------------------
+
+def constraint_attention_budget(state: SimState, beta: float) -> np.ndarray:
+    """Attention budget constraint: penalize tie formation when over capacity.
 
     sigma_i = 1 / (1 + exp(beta * (k_i - b_i)))
     Factor[i,j] = sigma_i * sigma_j
@@ -130,7 +145,7 @@ def mechanism_attention_budget(state: SimState, beta: float) -> np.ndarray:
     return sigma[:, np.newaxis] * sigma[np.newaxis, :]
 
 
-def mechanism_attention_hard(state: SimState) -> np.ndarray:
+def constraint_attention_hard(state: SimState) -> np.ndarray:
     """Hard attention budget: agents at or over budget cannot form new ties.
 
     Factor[i,j] = open_i * open_j
@@ -144,6 +159,11 @@ def mechanism_attention_hard(state: SimState) -> np.ndarray:
     """
     open_slots = (state.degrees < state.budgets).astype(np.float64)
     return open_slots[:, np.newaxis] * open_slots[np.newaxis, :]
+
+
+# Keep old names as aliases for backward compatibility in tests/imports
+mechanism_attention_budget = constraint_attention_budget
+mechanism_attention_hard = constraint_attention_hard
 
 
 # ---------------------------------------------------------------------------
@@ -188,48 +208,70 @@ def decay_over_budget(state: SimState, rng: np.random.Generator) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
-# Step function — compose mechanisms into one timestep
+# Type aliases
 # ---------------------------------------------------------------------------
 
 Mechanism = Callable[[SimState], np.ndarray]
+Constraint = Callable[[SimState], np.ndarray]
 
+
+# ---------------------------------------------------------------------------
+# Step function — compose mechanisms into one timestep
+# ---------------------------------------------------------------------------
 
 def step(
     state: SimState,
     mechanisms: list[Mechanism],
     rng: np.random.Generator,
+    intercept: float = -5.0,
+    constraints: list[Constraint] | None = None,
     enable_decay: bool = True,
 ) -> SimState:
-    """Execute one simulation timestep.
+    """Execute one simulation timestep using the logistic model.
 
-    1. Compute formation probability P by multiplying all mechanism factors.
-    2. Mask out existing ties (only form NEW edges).
-    3. Sample new edges from P.
-    4. Optionally apply tie decay for over-budget agents.
-    5. Return new state with updated A and incremented t.
+    1. Sum all mechanism log-odds contributions + intercept.
+    2. Apply sigmoid to get P(i,j).
+    3. Apply constraint factors (attention budget masks).
+    4. Symmetrize P for undirected sampling.
+    5. Mask out existing ties (only form NEW edges).
+    6. Sample new edges from P.
+    7. Optionally apply tie decay for over-budget agents.
 
     Args:
         state: current simulation state.
-        mechanisms: list of mechanism functions, each returns (N, N) factor.
+        mechanisms: list of mechanism functions, each returns (N, N) log-odds.
         rng: random number generator.
+        intercept: base rate in log-odds space. Default -5.0 (~0.7% base rate).
+        constraints: list of constraint functions, each returns (N, N) factor
+                     in [0, 1]. Applied multiplicatively after sigmoid.
         enable_decay: if True (default), drop excess ties each step.
 
     Returns:
         New SimState with updated adjacency and t+1.
     """
     n = state.n
+    if constraints is None:
+        constraints = []
 
-    # Multiply all mechanism factors
-    P = np.ones((n, n))
+    # Sum all mechanism log-odds contributions + intercept
+    logit = np.full((n, n), intercept, dtype=np.float64)
     for mech in mechanisms:
-        P *= mech(state)
+        logit += mech(state)
+
+    # Sigmoid: P = 1 / (1 + exp(-logit)), clamped to avoid overflow
+    logit = np.clip(logit, -500, 500)
+    P = 1.0 / (1.0 + np.exp(-logit))
+
+    # Apply constraint factors (attention budget, etc.)
+    for constraint in constraints:
+        P *= constraint(state)
+
+    # Symmetrize for undirected graph (average both directions)
+    P = (P + P.T) / 2.0
 
     # Mask existing ties and self-ties
     P *= (1 - state.A)
     np.fill_diagonal(P, 0.0)
-
-    # Clamp to [0, 1]
-    P = np.clip(P, 0.0, 1.0)
 
     # Sample new edges (upper triangle, then symmetrize)
     draws = rng.uniform(0, 1, size=(n, n))

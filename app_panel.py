@@ -22,8 +22,8 @@ from abm_core import (
 )
 from abm_dynamics import (
     mechanism_homophily, mechanism_triadic_closure,
-    mechanism_popularity, mechanism_attention_budget,
-    mechanism_attention_hard,
+    mechanism_popularity, constraint_attention_budget,
+    constraint_attention_hard,
 )
 from abm_runner import run_simulation
 from abm_storage import save_simulation
@@ -229,19 +229,23 @@ seed_inputs = [
 # ---------------------------------------------------------------
 # Widgets: Mechanisms
 # ---------------------------------------------------------------
+intercept_slider = pn.widgets.FloatSlider(
+    name="a (intercept / base rate)", start=-10.0, end=0.0, step=0.5, value=-5.0,
+)
+
 toggle_homophily = pn.widgets.Checkbox(name="Homophily", value=True)
-lam_slider = pn.widgets.FloatSlider(
-    name="\u03bb (decay rate)", start=0.1, end=100.0, step=0.1, value=3.0,
+b_homophily_slider = pn.widgets.FloatSlider(
+    name="b\u2081 (1/distance coeff)", start=0.0, end=10.0, step=0.1, value=2.0,
 )
 
 toggle_triadic = pn.widgets.Checkbox(name="Triadic Closure", value=False)
-tau_slider = pn.widgets.FloatSlider(
-    name="\u03c4 (boost per shared neighbor)", start=1.0, end=3.0, step=0.1, value=1.5,
+b_triadic_slider = pn.widgets.FloatSlider(
+    name="b\u2083 (shared neighbors coeff)", start=0.0, end=5.0, step=0.1, value=1.0,
 )
 
 toggle_popularity = pn.widgets.Checkbox(name="Popularity", value=False)
-mu_slider = pn.widgets.FloatSlider(
-    name="\u03bc (popularity exponent)", start=0.0, end=2.0, step=0.05, value=0.5,
+b_popularity_slider = pn.widgets.FloatSlider(
+    name="b\u2082 (target popularity coeff)", start=0.0, end=5.0, step=0.1, value=0.5,
 )
 
 attention_mode = pn.widgets.Select(
@@ -272,7 +276,7 @@ edge_opacity_select = pn.widgets.Select(
 # ---------------------------------------------------------------
 # Widgets: Simulation
 # ---------------------------------------------------------------
-n_steps_slider = pn.widgets.IntSlider(name="Timesteps", start=10, end=500, step=10, value=200)
+n_steps_slider = pn.widgets.IntSlider(name="Timesteps", start=10, end=2000, step=10, value=200)
 run_button = pn.widgets.Button(name="Run Simulation", button_type="primary")
 save_button = pn.widgets.Button(name="Save Simulation", button_type="default")
 player = pn.widgets.Player(
@@ -689,28 +693,29 @@ def _build_init(geom, n, rng):
 
 
 def _build_mechanisms():
-    """Build the mechanism list from current widget state."""
+    """Build mechanism and constraint lists from current widget state."""
     mechanisms = []
+    constraints = []
     if toggle_homophily.value:
-        lam = lam_slider.value
-        mechanisms.append(lambda s, _lam=lam: mechanism_homophily(s, lam=_lam))
+        b = b_homophily_slider.value
+        mechanisms.append(lambda s, _b=b: mechanism_homophily(s, b_homophily=_b))
     if toggle_triadic.value:
-        tau = tau_slider.value
-        mechanisms.append(lambda s, _tau=tau: mechanism_triadic_closure(s, tau=_tau))
+        b = b_triadic_slider.value
+        mechanisms.append(lambda s, _b=b: mechanism_triadic_closure(s, b_triadic=_b))
     if toggle_popularity.value:
-        mu = mu_slider.value
-        mechanisms.append(lambda s, _mu=mu: mechanism_popularity(s, mu=_mu))
+        b = b_popularity_slider.value
+        mechanisms.append(lambda s, _b=b: mechanism_popularity(s, b_popularity=_b))
 
     att = attention_mode.value
     enable_decay = False
     if att == "Hard cutoff":
-        mechanisms.append(lambda s: mechanism_attention_hard(s))
+        constraints.append(lambda s: constraint_attention_hard(s))
     elif att == "Sigmoid + decay":
         beta = beta_slider.value
-        mechanisms.append(lambda s, _beta=beta: mechanism_attention_budget(s, beta=_beta))
+        constraints.append(lambda s, _beta=beta: constraint_attention_budget(s, beta=_beta))
         enable_decay = True
 
-    return mechanisms, enable_decay
+    return mechanisms, constraints, enable_decay
 
 
 # ---------------------------------------------------------------
@@ -723,7 +728,7 @@ def run_sim(event):
     is_hyperbolic = geom.startswith("Hyperbolic")
     n = n_agents.value
 
-    mechanisms, enable_decay = _build_mechanisms()
+    mechanisms, constraints, enable_decay = _build_mechanisms()
     if not mechanisms:
         stats_pane.object = '<div class="stats-bar" style="color:#f43f5e;">Enable at least one mechanism.</div>'
         return
@@ -746,7 +751,9 @@ def run_sim(event):
         # Same dynamics seed for all panels
         sim_rng = np.random.default_rng(42)
         history = run_simulation(init, mechanisms, budgets, n_steps_slider.value,
-                                 sim_rng, enable_decay=enable_decay)
+                                 sim_rng, intercept=intercept_slider.value,
+                                 constraints=constraints,
+                                 enable_decay=enable_decay)
 
         sim_states[pi]["history"] = history
         sim_states[pi]["is_torus"] = not is_hyperbolic
@@ -1037,12 +1044,14 @@ sidebar = pn.Column(
     seed_row,
     _section_label("Visualization"),
     node_color_select, edge_opacity_select,
-    _section_label("Mechanisms"),
-    toggle_homophily, lam_slider,
+    _section_label("Logistic Model"),
+    intercept_slider,
     pn.layout.Divider(styles={"border-color": "#e2e8f0", "margin": "2px 0"}),
-    toggle_triadic, tau_slider,
+    toggle_homophily, b_homophily_slider,
     pn.layout.Divider(styles={"border-color": "#e2e8f0", "margin": "2px 0"}),
-    toggle_popularity, mu_slider,
+    toggle_triadic, b_triadic_slider,
+    pn.layout.Divider(styles={"border-color": "#e2e8f0", "margin": "2px 0"}),
+    toggle_popularity, b_popularity_slider,
     pn.layout.Divider(styles={"border-color": "#e2e8f0", "margin": "2px 0"}),
     attention_mode, beta_slider, budget_slider,
     _section_label("Simulation"),

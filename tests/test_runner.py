@@ -1,6 +1,9 @@
 import numpy as np
 from abm_core import init_torus_uniform
-from abm_dynamics import mechanism_homophily, mechanism_attention_budget
+from abm_dynamics import (
+    mechanism_homophily,
+    constraint_attention_budget,
+)
 from abm_runner import run_simulation, SimHistory
 
 
@@ -8,8 +11,10 @@ def test_run_basic():
     rng = np.random.default_rng(42)
     init = init_torus_uniform(n=30, d=2, rng=rng)
     mechanisms = [
-        lambda s: mechanism_homophily(s, lam=5.0),
-        lambda s: mechanism_attention_budget(s, beta=3.0),
+        lambda s: mechanism_homophily(s, b_homophily=5.0),
+    ]
+    constraints = [
+        lambda s: constraint_attention_budget(s, beta=3.0),
     ]
     history = run_simulation(
         init_result=init,
@@ -17,6 +22,8 @@ def test_run_basic():
         budgets=np.full(30, 8),
         n_steps=10,
         rng=np.random.default_rng(42),
+        intercept=-3.0,
+        constraints=constraints,
     )
     assert isinstance(history, SimHistory)
     assert len(history.frames) == 11  # t=0 through t=10
@@ -27,13 +34,14 @@ def test_run_basic():
 def test_run_records_stats():
     rng = np.random.default_rng(42)
     init = init_torus_uniform(n=20, d=2, rng=rng)
-    mechanisms = [lambda s: mechanism_homophily(s, lam=5.0)]
+    mechanisms = [lambda s: mechanism_homophily(s, b_homophily=5.0)]
     history = run_simulation(
         init_result=init,
         mechanisms=mechanisms,
         budgets=np.full(20, 10),
         n_steps=5,
         rng=np.random.default_rng(42),
+        intercept=-3.0,
     )
     assert len(history.stats) == 6
     assert "mean_degree" in history.stats[0]
@@ -44,8 +52,10 @@ def test_run_records_constraint_decomposition():
     rng = np.random.default_rng(42)
     init = init_torus_uniform(n=30, d=2, rng=rng)
     mechanisms = [
-        lambda s: mechanism_homophily(s, lam=5.0),
-        lambda s: mechanism_attention_budget(s, beta=3.0),
+        lambda s: mechanism_homophily(s, b_homophily=5.0),
+    ]
+    constraints = [
+        lambda s: constraint_attention_budget(s, beta=3.0),
     ]
     history = run_simulation(
         init_result=init,
@@ -53,6 +63,8 @@ def test_run_records_constraint_decomposition():
         budgets=np.full(30, 8),
         n_steps=5,
         rng=np.random.default_rng(42),
+        intercept=-3.0,
+        constraints=constraints,
     )
     # node_metrics recorded for each frame
     assert len(history.node_metrics) == 6
