@@ -203,3 +203,49 @@ def test_run_grid_cell_reproducible(tmp_path):
         out_path=tmp_path / "b.npz",
     )
     assert rows1[-1]["mean_constraint"] == rows2[-1]["mean_constraint"]
+
+
+def test_run_grid_cell_intercept_changes_dynamics(tmp_path):
+    rng = np.random.default_rng(0)
+    init = init_torus_uniform(n=25, d=2, rng=rng)
+    rows_low = run_grid_cell(
+        init_result=init, b_homophily=1.0, b_triadic=0.0, b_popularity=0.0,
+        budget=5, n_steps=20, snapshot_times=[0, 20], sim_seed=1,
+        out_path=tmp_path / "neg7.npz", intercept=-7.0,
+    )
+    rows_high = run_grid_cell(
+        init_result=init, b_homophily=1.0, b_triadic=0.0, b_popularity=0.0,
+        budget=5, n_steps=20, snapshot_times=[0, 20], sim_seed=1,
+        out_path=tmp_path / "neg1.npz", intercept=-1.0,
+    )
+    # Higher intercept → more ties → lower mean_constraint
+    assert rows_high[-1]["mean_constraint"] < rows_low[-1]["mean_constraint"]
+
+
+def test_run_grid_cell_intercept_default_is_minus_five(tmp_path):
+    """Default intercept must remain -5.0 for back-compat with prior grid search."""
+    rng = np.random.default_rng(0)
+    init = init_torus_uniform(n=25, d=2, rng=rng)
+    rows_default = run_grid_cell(
+        init_result=init, b_homophily=1.0, b_triadic=0.0, b_popularity=0.0,
+        budget=5, n_steps=20, snapshot_times=[0, 20], sim_seed=1,
+        out_path=tmp_path / "default.npz",
+    )
+    rows_explicit = run_grid_cell(
+        init_result=init, b_homophily=1.0, b_triadic=0.0, b_popularity=0.0,
+        budget=5, n_steps=20, snapshot_times=[0, 20], sim_seed=1,
+        out_path=tmp_path / "explicit.npz", intercept=-5.0,
+    )
+    assert rows_default[-1]["mean_constraint"] == rows_explicit[-1]["mean_constraint"]
+
+
+def test_run_grid_cell_intercept_recorded_in_rows(tmp_path):
+    rng = np.random.default_rng(0)
+    init = init_torus_uniform(n=15, d=2, rng=rng)
+    rows = run_grid_cell(
+        init_result=init, b_homophily=1.0, b_triadic=0.0, b_popularity=0.0,
+        budget=5, n_steps=10, snapshot_times=[0, 10], sim_seed=1,
+        out_path=tmp_path / "rec.npz", intercept=-3.0,
+    )
+    for row in rows:
+        assert row["intercept"] == -3.0

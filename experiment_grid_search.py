@@ -148,6 +148,7 @@ def run_grid_cell(
     snapshot_times: list[int],
     sim_seed: int,
     out_path: Path | str,
+    intercept: float = -5.0,
 ) -> list[dict]:
     """Run a single (cell, replicate) and persist its snapshots.
 
@@ -155,12 +156,12 @@ def run_grid_cell(
         1. Build the mechanism list (zero-coef mechanisms omitted).
         2. Apply constraint_attention_hard with uniform `budget`.
         3. Run the simulation for `n_steps` steps with a fresh RNG seeded
-           from `sim_seed`.
+           from `sim_seed`, using `intercept` as the base log-odds.
         4. Save snapshots to `out_path`.
         5. Return one summary-row dict per snapshot timestep.
 
-    The returned rows include the configured coefficients so they can be
-    appended directly to a tidy DataFrame across the whole grid.
+    The returned rows include the configured coefficients and intercept so
+    they can be appended directly to a tidy DataFrame across the whole grid.
     """
     mechanisms = build_mechanisms(b_homophily, b_triadic, b_popularity)
     budgets = np.full(init_result.n, budget)
@@ -171,6 +172,7 @@ def run_grid_cell(
         budgets=budgets,
         n_steps=n_steps,
         rng=rng,
+        intercept=intercept,
         constraints=[constraint_attention_hard],
         enable_decay=True,
     )
@@ -182,6 +184,7 @@ def run_grid_cell(
             "b_homophily": b_homophily,
             "b_triadic": b_triadic,
             "b_popularity": b_popularity,
+            "intercept": intercept,
             "t": t,
             **summarize_metrics(history.node_metrics[t]),
         }
